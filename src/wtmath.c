@@ -2,6 +2,7 @@
 Copyright (c) 2018, Rafat Hussain
 */
 #include "wtmath.h"
+#include <math.h>
 
 void dwt_per_stride(double *inp, int N, double *lpd,double*hpd,int lpd_len,double *cA, int len_cA, double *cD, int istride, int ostride) {
 	int l, l2, isodd, i, t, len_avg,is,os;
@@ -62,7 +63,7 @@ void dwt_per_stride(double *inp, int N, double *lpd,double*hpd,int lpd_len,doubl
 			}
 
 		}
-		
+
 	}
 
 }
@@ -70,34 +71,82 @@ void dwt_per_stride(double *inp, int N, double *lpd,double*hpd,int lpd_len,doubl
 void dwt_sym_stride(double *inp, int N, double *lpd, double*hpd, int lpd_len, double *cA, int len_cA, double *cD, int istride, int ostride) {
 	int i, l, t, len_avg;
 	int is, os;
+	int ind1, ind2;
 	len_avg = lpd_len;
 
+	// The following is split into 3 conditions to try optimzing the WASM
+	// for (i = 0; i < len_cA; ++i) {
+	// 	t = 2 * i + 1;
+	// 	os = i *ostride;
+	// 	cA[os] = 0.0;
+	// 	cD[os] = 0.0;
+	// 	for (l = 0; l < len_avg; ++l) {
+	// 		if ((t - l) >= 0 && (t - l) < N) {
+	// 			is = (t - l) * istride;
+	// 			cA[os] += lpd[l] * inp[is];
+	// 			cD[os] += hpd[l] * inp[is];
+	// 		}
+	// 		else if ((t - l) < 0) {
+	// 			is = (-t + l - 1) * istride;
+	// 			cA[os] += lpd[l] * inp[is];
+	// 			cD[os] += hpd[l] * inp[is];
+	// 		}
+	// 		else if ((t - l) >= N) {
+	// 			is = (2 * N - t + l - 1) * istride;
+	// 			cA[os] += lpd[l] * inp[is];
+	// 			cD[os] += hpd[l] * inp[is];
+	// 		}
+	// 	}
+	// }
+
 	for (i = 0; i < len_cA; ++i) {
-		t = 2 * i + 1;
 		os = i *ostride;
 		cA[os] = 0.0;
 		cD[os] = 0.0;
-		for (l = 0; l < len_avg; ++l) {
-			if ((t - l) >= 0 && (t - l) < N) {
-				is = (t - l) * istride;
-				cA[os] += lpd[l] * inp[is];
-				cD[os] += hpd[l] * inp[is];
-			}
-			else if ((t - l) < 0) {
-				is = (-t + l - 1) * istride;
-				cA[os] += lpd[l] * inp[is];
-				cD[os] += hpd[l] * inp[is];
-			}
-			else if ((t - l) >= N) {
-				is = (2 * N - t + l - 1) * istride;
-				cA[os] += lpd[l] * inp[is];
-				cD[os] += hpd[l] * inp[is];
-			}
+	}
 
+	// first condition
+	for (i = 0; i < len_cA; ++i) {
+		t = 2 * i + 1;
+		os = i *ostride;
+		// t - l >= 0 <--> l <= t
+		// t - l < N <--> l >= t - N + 1
+		ind1 = (t - N + 1> 0) ? t - N + 1: 0;
+		ind2 = (len_avg < t + 1) ? len_avg : t + 1;
+		for (l = ind1; l < ind2; ++l) {
+			is = (t - l) * istride;
+			cA[os] += lpd[l] * inp[is];
+			cD[os] += hpd[l] * inp[is];
 		}
 	}
 
+	// second condition
+	for (i = 0; i < len_cA; ++i) {
+		t = 2 * i + 1;
+		os = i *ostride;
+		// t - l < 0 <--> l >= t + 1
+		ind1 = (t + 1 > 0) ? t + 1 : 0;
+		ind2 = len_avg;
+		for (l = ind1; l < ind2; ++l) {
+			is = (-t + l - 1) * istride;
+			cA[os] += lpd[l] * inp[is];
+			cD[os] += hpd[l] * inp[is];
+		}
+	}
 
+	// third condition
+	for (i = 0; i < len_cA; ++i) {
+		t = 2 * i + 1;
+		os = i *ostride;
+		// t - l >= N <--> l < t - N + 1
+		ind1 = 0;
+		ind2 = (len_avg < t - N + 1) ? len_avg : t - N + 1;
+		for (l = ind1; l < ind2; ++l) {
+			is = (2 * N - t + l - 1) * istride;
+			cA[os] += lpd[l] * inp[is];
+			cD[os] += hpd[l] * inp[is];
+		}
+	}
 }
 
 void modwt_per_stride(int M, double *inp, int N, double *filt, int lpd_len, double *cA, int len_cA, double *cD, int istride, int ostride) {
@@ -127,7 +176,7 @@ void modwt_per_stride(int M, double *inp, int N, double *filt, int lpd_len, doub
 
 		}
 	}
-	
+
 }
 
 void swt_per_stride(int M, double *inp, int N, double *lpd, double*hpd, int lpd_len, double *cA, int len_cA, double *cD, int istride, int ostride) {
@@ -252,7 +301,7 @@ void idwt_sym_stride(double *cA, int len_cA, double *cD, double *lpr, double *hp
 void imodwt_per_stride(int M, double *cA, int len_cA, double *cD, double *filt,int lf,double *X,int istride, int ostride) {
 	int len_avg, i, l, t;
 	int is, os;
-	
+
 	len_avg = lf;
 
 	for (i = 0; i < len_cA; ++i) {
